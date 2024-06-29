@@ -2754,15 +2754,25 @@ mod tests {
 
     #[test]
     fn test_schema_incompatible_column() {
-        let file = write_parquet_from_iter(vec![(
-            "col",
-            Arc::new(Int64Array::from(vec![0])) as ArrayRef,
-        )]);
-        let supplied_schema = Arc::new(Schema::new(vec![Field::new(
-            "col",
-            ArrowDataType::Int32,
-            false,
-        )]));
+        let file = write_parquet_from_iter(vec![
+            (
+                "col1_invalid",
+                Arc::new(Int64Array::from(vec![0])) as ArrayRef,
+            ),
+            (
+                "col2_valid",
+                Arc::new(Int32Array::from(vec![0])) as ArrayRef,
+            ),
+            (
+                "col3_invalid",
+                Arc::new(Date64Array::from(vec![0])) as ArrayRef,
+            ),
+        ]);
+        let supplied_schema = Arc::new(Schema::new(vec![
+            Field::new("col1_invalid", ArrowDataType::Int32, false),
+            Field::new("col2_valid", ArrowDataType::Int32, false),
+            Field::new("col3_invalid", ArrowDataType::Int32, false),
+        ]));
         let options_with_schema = ArrowReaderOptions::new().with_schema(supplied_schema.clone());
         let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(
             file.try_clone().unwrap(),
@@ -2770,7 +2780,7 @@ mod tests {
         );
         assert_eq!(
             builder.err().unwrap().to_string(),
-            "Arrow: incompatible arrow schema, the following fields could not be cast: [col]"
+            "Arrow: incompatible arrow schema, the following fields could not be cast: [col1_invalid, col3_invalid]"
         );
     }
 
