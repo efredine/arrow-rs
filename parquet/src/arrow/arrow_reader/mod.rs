@@ -2792,46 +2792,59 @@ mod tests {
 
     #[test]
     fn test_with_schema() {
+        let nested_fields = Fields::from(vec![
+            Field::new("utf8_to_dict", ArrowDataType::Utf8, false),
+            Field::new("int64_to_ts_nano", ArrowDataType::Int64, false),
+        ]);
+
+        let nested_arrays: Vec<ArrayRef> = vec![
+            Arc::new(StringArray::from(vec!["a", "a", "a", "b"])) as ArrayRef,
+            Arc::new(Int64Array::from(vec![1, 2, 3, 4])) as ArrayRef,
+        ];
+
+        let nested = StructArray::try_new(nested_fields, nested_arrays, None).unwrap();
+
         let file = write_parquet_from_iter(vec![
             (
-                "int32_to_ts",
+                "int32_to_ts_second",
                 Arc::new(Int32Array::from(vec![0, 1, 2, 3])) as ArrayRef,
-            ),
-            (
-                "int64_to_ts",
-                Arc::new(Int64Array::from(vec![1, 2, 3, 4])) as ArrayRef,
             ),
             (
                 "date32_to_date64",
                 Arc::new(Date32Array::from(vec![0, 1, 2, 3])) as ArrayRef,
             ),
-            (
-                "utf8_to_dict",
-                Arc::new(StringArray::from(vec!["a", "a", "a", "b"])) as ArrayRef,
-            ),
+            ("nested", Arc::new(nested) as ArrayRef),
         ]);
 
-        let supplied_schema = Arc::new(Schema::new(vec![
-            Field::new(
-                "int32_to_ts",
-                ArrowDataType::Timestamp(arrow::datatypes::TimeUnit::Second, Some("+01:00".into())),
-                false,
-            ),
-            Field::new(
-                "int64_to_ts",
-                ArrowDataType::Timestamp(
-                    arrow::datatypes::TimeUnit::Nanosecond,
-                    Some("+10:00".into()),
-                ),
-                false,
-            ),
-            Field::new("date32_to_date64", ArrowDataType::Date64, false),
+        let supplied_nested_fields = Fields::from(vec![
             Field::new(
                 "utf8_to_dict",
                 ArrowDataType::Dictionary(
                     Box::new(ArrowDataType::Int32),
                     Box::new(ArrowDataType::Utf8),
                 ),
+                false,
+            ),
+            Field::new(
+                "int64_to_ts_nano",
+                ArrowDataType::Timestamp(
+                    arrow::datatypes::TimeUnit::Nanosecond,
+                    Some("+10:00".into()),
+                ),
+                false,
+            ),
+        ]);
+
+        let supplied_schema = Arc::new(Schema::new(vec![
+            Field::new(
+                "int32_to_ts_second",
+                ArrowDataType::Timestamp(arrow::datatypes::TimeUnit::Second, Some("+01:00".into())),
+                false,
+            ),
+            Field::new("date32_to_date64", ArrowDataType::Date64, false),
+            Field::new(
+                "nested",
+                ArrowDataType::Struct(supplied_nested_fields),
                 false,
             ),
         ]));
@@ -2847,7 +2860,7 @@ mod tests {
 
         assert_eq!(arrow_reader.schema(), supplied_schema);
         let batch = arrow_reader.next().unwrap().unwrap();
-        assert_eq!(batch.num_columns(), 4);
+        assert_eq!(batch.num_columns(), 3);
         assert_eq!(batch.num_rows(), 4);
         assert_eq!(
             batch
@@ -2864,17 +2877,6 @@ mod tests {
             batch
                 .column(1)
                 .as_any()
-                .downcast_ref::<TimestampNanosecondArray>()
-                .expect("downcast to timestamp nanosecond")
-                .value_as_datetime_with_tz(0, "+10:00".parse().unwrap())
-                .map(|v| v.to_string())
-                .expect("value as datetime"),
-            "1970-01-01 10:00:00.000000001 +10:00"
-        );
-        assert_eq!(
-            batch
-                .column(2)
-                .as_any()
                 .downcast_ref::<Date64Array>()
                 .expect("downcast to date64")
                 .value_as_date(0)
@@ -2883,14 +2885,21 @@ mod tests {
             "1970-01-01"
         );
 
-        let dict = batch
-            .column(3)
+        let nested = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .expect("downcast to struct");
+
+        let nested_dict = nested
+            .column(0)
             .as_any()
             .downcast_ref::<Int32DictionaryArray>()
             .expect("downcast to dictionary");
 
         assert_eq!(
-            dict.values()
+            nested_dict
+                .values()
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .expect("downcast to string")
@@ -2900,8 +2909,20 @@ mod tests {
         );
 
         assert_eq!(
-            dict.keys().iter().collect::<Vec<_>>(),
+            nested_dict.keys().iter().collect::<Vec<_>>(),
             vec![Some(0), Some(0), Some(0), Some(1)]
+        );
+
+        assert_eq!(
+            nested
+                .column(1)
+                .as_any()
+                .downcast_ref::<TimestampNanosecondArray>()
+                .expect("downcast to timestamp nanosecond")
+                .value_as_datetime_with_tz(0, "+10:00".parse().unwrap())
+                .map(|v| v.to_string())
+                .expect("value as datetime"),
+            "1970-01-01 10:00:00.000000001 +10:00"
         );
     }
 
