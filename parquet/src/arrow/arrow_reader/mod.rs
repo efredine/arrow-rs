@@ -372,26 +372,7 @@ impl ArrowReaderMetadata {
     /// See [`Self::load`] for more details.
     pub fn try_new(metadata: Arc<ParquetMetaData>, options: ArrowReaderOptions) -> Result<Self> {
         match options.supplied_schema {
-            Some(supplied_schema) => {
-                let parquet_schema = metadata.file_metadata().schema_descr();
-                let field_levels = parquet_to_arrow_field_levels(
-                    parquet_schema,
-                    ProjectionMask::all(),
-                    Some(supplied_schema.fields()),
-                )?;
-                let inferred_schema = Schema::new(field_levels.fields);
-                if supplied_schema.contains(&inferred_schema) {
-                    Ok(Self {
-                        metadata,
-                        schema: Arc::from(inferred_schema),
-                        fields: field_levels.levels.map(Arc::new),
-                    })
-                } else {
-                    Err(ParquetError::ArrowError(
-                        "supplied schema does not match the parquet schema".into(),
-                    ))
-                }
-            }
+            Some(supplied_schema) => Self::with_supplied_schema(metadata, supplied_schema.clone()),
             None => {
                 let kv_metadata = match options.skip_arrow_metadata {
                     true => None,
@@ -408,6 +389,56 @@ impl ArrowReaderMetadata {
                     metadata,
                     schema: Arc::new(schema),
                     fields: fields.map(Arc::new),
+                })
+            }
+        }
+    }
+
+    fn with_supplied_schema(
+        metadata: Arc<ParquetMetaData>,
+        supplied_schema: SchemaRef,
+    ) -> Result<Self> {
+        let parquet_schema = metadata.file_metadata().schema_descr();
+        let field_levels = parquet_to_arrow_field_levels(
+            parquet_schema,
+            ProjectionMask::all(),
+            Some(supplied_schema.fields()),
+        )?;
+        let fields = field_levels.fields;
+        let inferred_len = fields.len();
+        let supplied_len = supplied_schema.fields().len();
+        // Ensure the supplied schema has the same number of columns as the parquet schema.
+        // parquet_to_arrow_field_levels is expected to throw an error if the schemas have
+        // different lengths, but we check here to be safe.
+        if inferred_len != supplied_len {
+            Err(arrow_err!(format!(
+                "incompatible arrow schema, expected {} columns received {}",
+                inferred_len, supplied_len
+            )))
+        } else {
+            let diff_fields: Vec<_> = supplied_schema
+                .fields()
+                .iter()
+                .zip(fields.iter())
+                .filter_map(|(field1, field2)| {
+                    if field1 != field2 {
+                        Some(field1.name().clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if !diff_fields.is_empty() {
+                Err(ParquetError::ArrowError(format!(
+                    "incompatible arrow schema, the following fields could not be cast: [{}]",
+                    diff_fields.join(", ")
+                )))
+            } else {
+                Ok(Self {
+                    metadata,
+                    schema: supplied_schema,
+                    fields: field_levels.levels.map(Arc::new),
                 })
             }
         }
@@ -2755,7 +2786,7 @@ mod tests {
 
         assert_eq!(
             builder.err().unwrap().to_string(),
-            "Arrow: supplied schema does not match the parquet schema"
+            "Arrow: incompatible arrow schema, the following fields could not be cast: [col]"
         );
     }
 
