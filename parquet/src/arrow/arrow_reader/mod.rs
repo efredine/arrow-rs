@@ -2695,25 +2695,26 @@ mod tests {
         assert_eq!(reader.schema(), schema_without_metadata);
     }
 
-    fn write_parquet_file(file: &mut File, schema: Arc<Schema>, data: Vec<ArrayRef>) {
-        let batch = RecordBatch::try_new(schema.clone(), data).unwrap();
-        let mut writer = ArrowWriter::try_new(file, schema.clone(), None).unwrap();
+    fn write_parquet_from_iter<I, F>(value: I) -> File
+    where
+        I: IntoIterator<Item = (F, ArrayRef)>,
+        F: AsRef<str>,
+    {
+        let batch = RecordBatch::try_from_iter(value).unwrap();
+        let file = tempfile().unwrap();
+        let mut writer =
+            ArrowWriter::try_new(file.try_clone().unwrap(), batch.schema().clone(), None).unwrap();
         writer.write(&batch).unwrap();
         writer.close().unwrap();
+        file
     }
 
     #[test]
     fn test_schema_too_many_columns() {
-        let file = tempfile().unwrap();
-        write_parquet_file(
-            &mut file.try_clone().unwrap(),
-            Arc::new(Schema::new(vec![Field::new(
-                "int64",
-                ArrowDataType::Int64,
-                false,
-            )])),
-            vec![Arc::new(Int64Array::from(vec![0]))],
-        );
+        let file = write_parquet_from_iter(vec![(
+            "int64",
+            Arc::new(Int64Array::from(vec![0])) as ArrayRef,
+        )]);
         let supplied_schema = Arc::new(Schema::new(vec![
             Field::new("int64", ArrowDataType::Int64, false),
             Field::new("int32", ArrowDataType::Int32, true),
@@ -2723,7 +2724,6 @@ mod tests {
             file.try_clone().unwrap(),
             options_with_schema,
         );
-
         assert_eq!(
             builder.err().unwrap().to_string(),
             "Arrow: incompatible arrow schema, expected 1 struct fields got 2"
@@ -2732,18 +2732,10 @@ mod tests {
 
     #[test]
     fn test_schema_too_few_columns() {
-        let file = tempfile().unwrap();
-        write_parquet_file(
-            &mut file.try_clone().unwrap(),
-            Arc::new(Schema::new(vec![
-                Field::new("int64", ArrowDataType::Int64, false),
-                Field::new("int32", ArrowDataType::Int32, true),
-            ])),
-            vec![
-                Arc::new(Int64Array::from(vec![0])),
-                Arc::new(Int32Array::from(vec![0])),
-            ],
-        );
+        let file = write_parquet_from_iter(vec![
+            ("int64", Arc::new(Int64Array::from(vec![0])) as ArrayRef),
+            ("int32", Arc::new(Int32Array::from(vec![0])) as ArrayRef),
+        ]);
         let supplied_schema = Arc::new(Schema::new(vec![Field::new(
             "int64",
             ArrowDataType::Int64,
@@ -2754,7 +2746,6 @@ mod tests {
             file.try_clone().unwrap(),
             options_with_schema,
         );
-
         assert_eq!(
             builder.err().unwrap().to_string(),
             "Arrow: incompatible arrow schema, expected 2 struct fields got 1"
@@ -2763,16 +2754,10 @@ mod tests {
 
     #[test]
     fn test_schema_incompatible_column() {
-        let file = tempfile().unwrap();
-        write_parquet_file(
-            &mut file.try_clone().unwrap(),
-            Arc::new(Schema::new(vec![Field::new(
-                "col",
-                ArrowDataType::Int64,
-                false,
-            )])),
-            vec![Arc::new(Int64Array::from(vec![0]))],
-        );
+        let file = write_parquet_from_iter(vec![(
+            "col",
+            Arc::new(Int64Array::from(vec![0])) as ArrayRef,
+        )]);
         let supplied_schema = Arc::new(Schema::new(vec![Field::new(
             "col",
             ArrowDataType::Int32,
@@ -2783,7 +2768,6 @@ mod tests {
             file.try_clone().unwrap(),
             options_with_schema,
         );
-
         assert_eq!(
             builder.err().unwrap().to_string(),
             "Arrow: incompatible arrow schema, the following fields could not be cast: [col]"
@@ -2792,24 +2776,24 @@ mod tests {
 
     #[test]
     fn test_with_schema() {
-        let initial_schema = Arc::new(Schema::new(vec![
-            Field::new("int32_to_ts", ArrowDataType::Int32, false),
-            Field::new("int64_to_ts", ArrowDataType::Int64, false),
-            Field::new("date32_to_date64", ArrowDataType::Date32, false),
-            Field::new("utf8_to_dict", ArrowDataType::Utf8, false),
-        ]));
-
-        let file = tempfile().unwrap();
-        write_parquet_file(
-            &mut file.try_clone().unwrap(),
-            initial_schema,
-            vec![
-                Arc::new(Int32Array::from(vec![0, 1, 2, 3])),
-                Arc::new(Int64Array::from(vec![1, 2, 3, 4])),
-                Arc::new(Date32Array::from(vec![0, 1, 2, 3])),
-                Arc::new(StringArray::from(vec!["a", "a", "a", "b"])),
-            ],
-        );
+        let file = write_parquet_from_iter(vec![
+            (
+                "int32_to_ts",
+                Arc::new(Int32Array::from(vec![0, 1, 2, 3])) as ArrayRef,
+            ),
+            (
+                "int64_to_ts",
+                Arc::new(Int64Array::from(vec![1, 2, 3, 4])) as ArrayRef,
+            ),
+            (
+                "date32_to_date64",
+                Arc::new(Date32Array::from(vec![0, 1, 2, 3])) as ArrayRef,
+            ),
+            (
+                "utf8_to_dict",
+                Arc::new(StringArray::from(vec!["a", "a", "a", "b"])) as ArrayRef,
+            ),
+        ]);
 
         let supplied_schema = Arc::new(Schema::new(vec![
             Field::new(
