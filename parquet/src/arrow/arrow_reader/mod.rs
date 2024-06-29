@@ -283,6 +283,9 @@ impl ArrowReaderOptions {
     /// For example, if you wanted to cast from an Int64 in the Parquet file to a Timestamp
     /// in the Arrow schema.
     ///
+    /// The supplied schema must have the same number of columns as the parquet schema and
+    /// the column names need to be the same.
+    ///
     pub fn with_schema(self, schema: SchemaRef) -> Self {
         Self {
             supplied_schema: Some(schema),
