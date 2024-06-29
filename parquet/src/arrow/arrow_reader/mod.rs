@@ -915,7 +915,7 @@ mod tests {
     use arrow_array::*;
     use arrow_buffer::{i256, ArrowNativeType, Buffer, IntervalDayTime};
     use arrow_data::ArrayDataBuilder;
-    use arrow_schema::{ArrowError, DataType as ArrowDataType, Field, Fields, Schema};
+    use arrow_schema::{ArrowError, DataType as ArrowDataType, Field, Fields, Schema, SchemaRef};
     use arrow_select::concat::concat_batches;
 
     use crate::arrow::arrow_reader::{
@@ -2709,78 +2709,84 @@ mod tests {
         file
     }
 
-    #[test]
-    fn test_schema_too_many_columns() {
-        let file = write_parquet_from_iter(vec![(
-            "int64",
-            Arc::new(Int64Array::from(vec![0])) as ArrayRef,
-        )]);
-        let supplied_schema = Arc::new(Schema::new(vec![
-            Field::new("int64", ArrowDataType::Int64, false),
-            Field::new("int32", ArrowDataType::Int32, true),
-        ]));
-        let options_with_schema = ArrowReaderOptions::new().with_schema(supplied_schema.clone());
+    fn run_schema_test_with_error<I, F>(value: I, schema: SchemaRef, expected_error: &str)
+    where
+        I: IntoIterator<Item = (F, ArrayRef)>,
+        F: AsRef<str>,
+    {
+        let file = write_parquet_from_iter(value);
+        let options_with_schema = ArrowReaderOptions::new().with_schema(schema.clone());
         let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(
             file.try_clone().unwrap(),
             options_with_schema,
         );
-        assert_eq!(
-            builder.err().unwrap().to_string(),
-            "Arrow: incompatible arrow schema, expected 1 struct fields got 2"
-        );
+        assert_eq!(builder.err().unwrap().to_string(), expected_error);
     }
 
     #[test]
     fn test_schema_too_few_columns() {
-        let file = write_parquet_from_iter(vec![
-            ("int64", Arc::new(Int64Array::from(vec![0])) as ArrayRef),
-            ("int32", Arc::new(Int32Array::from(vec![0])) as ArrayRef),
-        ]);
-        let supplied_schema = Arc::new(Schema::new(vec![Field::new(
-            "int64",
-            ArrowDataType::Int64,
-            false,
-        )]));
-        let options_with_schema = ArrowReaderOptions::new().with_schema(supplied_schema.clone());
-        let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(
-            file.try_clone().unwrap(),
-            options_with_schema,
-        );
-        assert_eq!(
-            builder.err().unwrap().to_string(),
-            "Arrow: incompatible arrow schema, expected 2 struct fields got 1"
+        run_schema_test_with_error(
+            vec![
+                ("int64", Arc::new(Int64Array::from(vec![0])) as ArrayRef),
+                ("int32", Arc::new(Int32Array::from(vec![0])) as ArrayRef),
+            ],
+            Arc::new(Schema::new(vec![Field::new(
+                "int64",
+                ArrowDataType::Int64,
+                false,
+            )])),
+            "Arrow: incompatible arrow schema, expected 2 struct fields got 1",
         );
     }
 
     #[test]
-    fn test_schema_incompatible_column() {
-        let file = write_parquet_from_iter(vec![
-            (
-                "col1_invalid",
-                Arc::new(Int64Array::from(vec![0])) as ArrayRef,
-            ),
-            (
-                "col2_valid",
-                Arc::new(Int32Array::from(vec![0])) as ArrayRef,
-            ),
-            (
-                "col3_invalid",
-                Arc::new(Date64Array::from(vec![0])) as ArrayRef,
-            ),
-        ]);
-        let supplied_schema = Arc::new(Schema::new(vec![
-            Field::new("col1_invalid", ArrowDataType::Int32, false),
-            Field::new("col2_valid", ArrowDataType::Int32, false),
-            Field::new("col3_invalid", ArrowDataType::Int32, false),
-        ]));
-        let options_with_schema = ArrowReaderOptions::new().with_schema(supplied_schema.clone());
-        let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(
-            file.try_clone().unwrap(),
-            options_with_schema,
+    fn test_schema_too_many_columns() {
+        run_schema_test_with_error(
+            vec![("int64", Arc::new(Int64Array::from(vec![0])) as ArrayRef)],
+            Arc::new(Schema::new(vec![
+                Field::new("int64", ArrowDataType::Int64, false),
+                Field::new("int32", ArrowDataType::Int32, false),
+            ])),
+            "Arrow: incompatible arrow schema, expected 1 struct fields got 2",
         );
-        assert_eq!(
-            builder.err().unwrap().to_string(),
-            "Arrow: incompatible arrow schema, the following fields could not be cast: [col1_invalid, col3_invalid]"
+    }
+
+    #[test]
+    fn test_schema_mismatched_column_names() {
+        run_schema_test_with_error(
+            vec![("int64", Arc::new(Int64Array::from(vec![0])) as ArrayRef)],
+            Arc::new(Schema::new(vec![Field::new(
+                "other",
+                ArrowDataType::Int64,
+                false,
+            )])),
+            "Arrow: incompatible arrow schema, expected field named int64 got other",
+        );
+    }
+
+    #[test]
+    fn test_schema_incompatible_columns() {
+        run_schema_test_with_error(
+            vec![
+                (
+                    "col1_invalid",
+                    Arc::new(Int64Array::from(vec![0])) as ArrayRef,
+                ),
+                (
+                    "col2_valid",
+                    Arc::new(Int32Array::from(vec![0])) as ArrayRef,
+                ),
+                (
+                    "col3_invalid",
+                    Arc::new(Date64Array::from(vec![0])) as ArrayRef,
+                ),
+            ],
+            Arc::new(Schema::new(vec![
+                Field::new("col1_invalid", ArrowDataType::Int32, false),
+                Field::new("col2_valid", ArrowDataType::Int32, false),
+                Field::new("col3_invalid", ArrowDataType::Int32, false),
+            ])),
+            "Arrow: incompatible arrow schema, the following fields could not be cast: [col1_invalid, col3_invalid]",
         );
     }
 
