@@ -2791,6 +2791,44 @@ mod tests {
     }
 
     #[test]
+    fn test_one_incompatible_nested_column() {
+        let nested_fields = Fields::from(vec![
+            Field::new("nested1_valid", ArrowDataType::Utf8, false),
+            Field::new("nested1_invalid", ArrowDataType::Int64, false),
+        ]);
+        let nested = StructArray::try_new(
+            nested_fields,
+            vec![
+                Arc::new(StringArray::from(vec!["a"])) as ArrayRef,
+                Arc::new(Int64Array::from(vec![0])) as ArrayRef,
+            ],
+            None,
+        )
+        .expect("struct array");
+        let supplied_nested_fields = Fields::from(vec![
+            Field::new("nested1_valid", ArrowDataType::Utf8, false),
+            Field::new("nested1_invalid", ArrowDataType::Int32, false),
+        ]);
+        run_schema_test_with_error(
+            vec![
+                ("col1", Arc::new(Int64Array::from(vec![0])) as ArrayRef),
+                ("col2", Arc::new(Int32Array::from(vec![0])) as ArrayRef),
+                ("nested", Arc::new(nested) as ArrayRef),
+            ],
+            Arc::new(Schema::new(vec![
+                Field::new("col1", ArrowDataType::Int64, false),
+                Field::new("col2", ArrowDataType::Int32, false),
+                Field::new(
+                    "nested",
+                    ArrowDataType::Struct(supplied_nested_fields),
+                    false,
+                ),
+            ])),
+            "Arrow: incompatible arrow schema, the following fields could not be cast: [nested]",
+        );
+    }
+
+    #[test]
     fn test_with_schema() {
         let nested_fields = Fields::from(vec![
             Field::new("utf8_to_dict", ArrowDataType::Utf8, false),
